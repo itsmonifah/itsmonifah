@@ -1,1 +1,175 @@
+# المصادقة (Authentication)
+
+**مثال:** تخيّل بوابة staging فيها صفحة تسجيل دخول جميلة على `app.staging.example`. لكن في Burp ترى أن كل طلبات الحساب تذهب إلى `api.internal.staging.example` — هناك يُصدر التوكن. الصفحة للعرض فقط؛ **الهوية تُثبت في الـ API**.
+
+**باختصار:** الهدف ليس «كسر الفورم» — بل معرفة **أين** التطبيق يقول «أنت المستخدم X» وهل يتحقق فعلاً.
+
+---
+
+## أي دليل تحتاج؟
+
+ليس: هل صفحة اللوجن تنكسر؟
+
+بل: هل التطبيق **يلتزم بهوية** في HTTP — بدون كلمة مرور صحيحة أو تحقق ثانٍ أو OTP حقيقي؟
+
+سؤال واحد:
+
+*أين يقول التطبيق «أصدق أنك X» — وهل فحص أحد ذلك؟*
+
+---
+
+## إشارات تستحق التحقيق
+
+قبل أي هجوم عنيف:
+
+- إجراءات الحساب تضرب **host مختلف** عن الصفحة في المتصفح.
+- **فشل لوجن** لكن يرجع **Cookie** أو هيدر جلسة.
+- رسالة الخطأ متطابقة في المتصفح — لكن **Content-Length** تغيّر في History.
+- يوجد تسجيل حساب والـ scope قال «auth فقط» — الـ brief ناقص لا التطبيق.
+- وصل إيميل است recovery بينما ما زلت تختبر lockout على اللوجن.
+- SSO في History أطول مما يبدو في الواجهة.
+- مسار يرجع JSON errors لـ HTTP method خاطئ — في auth خلفي هناك.
+- `/v2` في artifacts والواجهة `/v1`.
+
+الشك **ليس** finding — هو إذن **لا تثق بالباب الظاهر**.
+
+---
+
+## أول عشر دقائق — بدون payloads
+
+عادة عمل، ليست checklist رسمية.
+
+1. سجّل دخول **فاشل** عمداً. احفظ الطلب والرد.
+2. اضغط كل رابط يشبه دورة الحياة: register, recover, verify, invite, SSO, logout.
+3. لا تقرأ من المتصفح فقط — اقرأ **Proxy History**.
+
+إذا لا تستطيع شرح الفرق بين fail و success في: **status، length، redirect، proof headers** — التوجيه لم ينته. هذا طبيعي. إرسال payloads قبل ذلك عادة خطأ.
+
+---
+
+## متى تتغير الفرضية؟
+
+**«اللوجن هو الباب.»**  
+**مثال:** الفورم يقبل user/pass لكن كل POST بعد التحميل يذهب لـ API ويرجع bearer token. اختبر **نقطة commit** في API لا أسماء الحقول في HTML.
+
+**«التعداد مستحيل — نفس صفحة الخطأ.»**  
+**مثال:** HTML متطابق لكن **Content-Length** يختلف — تعداد أعمى عبر الطول.
+
+**«MFA = انتهينا من كلمة المرور.»**  
+**مثال:** شاشة OTP بعد اللوجن لكن `/dashboard` يرجع 200 **قبل** إدخال الكود. الـ UI يفرض؛ الـ backend ربما لا.
+
+**«Logout نجح.»**  
+**مثال:** الواجهة تغيّرت لكن **نفس Cookie** يعمل في Repeater. logout من جهة العميل فقط.
+
+**«Lockout أوقف التخمين.»**  
+**مثال:** اللوجن يقفل بعد 6 محاولات؛ recovery يقبل محاولات غير محدودة على كود 6 أرقام. اختبر recovery أولاً.
+
+**«حصلنا على token — auth محلول.»**  
+**مثال:** health check يرفض token معدّل لكن export يقبله. التحقق **حسب المسار** لا عالمي.
+
+---
+
+## متى تتوقف على هذا المسار
+
+| الحالة | قرار |
+|--------|------|
+| كل action يذهب لـ backend واحد، proof واحد | توقف عن «أشباح» |
+| 5 أزواج identifiers بدون فرق ثابت | توقف تعداد أو غيّر المسار |
+| quote في user لا يغيّر شيء 3 مرات | توقف injection على اللوجن |
+| recovery token طويل، مرة واحدة، 10 دقائق | توقف إلا إذا أثبتت delivery لغيرك |
+| CAPTCHA أو lockout | توقف قبل ضجيج helpdesk |
+| تعديل claims يفشل على كل route مهم | توقف tampering |
+
+**«حصلنا على وصول»** بدون فتح URL حساس كهذه الهوية — الخيط غير مغلق.
+
+اكتب **لماذا** أغلقت المسار.
+
+---
+
+## ما يضيع ثلاثين دقيقة؟
+
+- wordlist قبل وجود username أو فرق true/false.
+- Hydra بأسماء حقول م guessed بدل History.
+- الثقة بـ «logged in» في المتصفح بدون Repeater.
+- Intruder على parameterين معاً — لا تعرف أيهما حرّك الرد.
+- automation قبل proof هادئ.
+- تجاهل sign-up لأنه «خارج scope».
+- اعتبار شاشة MFA = enforcement في backend.
+- reporting enumeration بدون ماذا فعلت لاحقاً.
+
+---
+
+## إشارات صغيرة تُفوت
+
+- فرق 11 بايت في Length — Intruder sort by length.
+- تعليق HTML `err:auth` vs `err:user` — نفس الصفحة، source مختلف.
+- `Set-Cookie` على **محاولة فاشلة** — fixation.
+- JSON error يذكر field غير موجود في الفورم.
+- `303` vs `302` على success فقط.
+- logout يمسح UI؛ Cookie يعمل في Repeater.
+- proof ثانٍ في mobile traffic فقط.
+- rate limit per-IP — spray من IPs مختلفة في lab.
+
+---
+
+## سير عمل Burp
+
+انظر **[BurpSuite.md](../tools/BurpSuite.md)** للإعداد الكامل.
+
+| السؤال | الأداة |
+|--------|--------|
+| كيف بدا الفشل raw؟ | Proxy History |
+| هل تغيير واحد غيّر نوع الرد؟ | Repeater |
+| هل الفرق حقيقي؟ | Comparer |
+| هل ثابت 10 مرات؟ | Intruder، sort length/status |
+| للعرض لاحقاً؟ | Save item |
+
+**Repeater قبل Intruder** — تأكد الف split ثم automate.
+
+---
+
+## ما يُ report فعلاً؟
+
+**يُ report:** هوية حُصلت أو تُجاوزت **+** ماذا وصلت هذه الهوية. خطوات قابلة للتكرار. impact = وظيفة عمل (admin، بيانات غيرك، export).
+
+**عادة لا:** صفحة لوجن موجودة؛ enumeration بدون استخدام؛ Secure ناقص على cookie لم يتحرك؛ spray فشل؛ «قد يكون brute force» بدون policy.
+
+جملة الهدف:
+
+*كـ [هوية]، [فعل] على [أصل] مما أدى إلى [نتيجة].*
+
+---
+
+## ملاحظات تدريبية
+
+**مثال:** فورم decorative؛ register على host قديم يقبل `type:internal` في JSON — grep JS للـ hostnames أولاً.
+
+**مثال:** 40 دقيقة spray؛ reset بكود 4 أرقام بدون lock — اختبر recovery عند lockout في اللوجن.
+
+**مثال:** نفس صفحة خطأ؛ length يختلف — 3 حسابات بـ spray واحد.
+
+**مثال:** quote → 500 ثم logic break — Repeater واحد يكفي؛ sqlmap صاخب.
+
+**مثال:** logout «نجح» في UI؛ Cookie يعمل — resend قبل التقرير.
+
+**مثال:** cookie على web و Bearer على API — API يقبل `staff:true` بدون re-verify.
+
+---
+
+## Checklist نهائي
+
+- [ ] Fail vs success — مفسّر على السلك؟
+- [ ] بحثت عن مكان commit ثانٍ للهوية؟
+- [ ] كل «ريحة» أُغلقت أو استُغلت — مع سبب
+- [ ] إن عندك proof: replay، logout، claim معدّل، URL محمي
+- [ ] Saved items = ما ستعرضه
+- [ ] Impact = reach لا «logged in» فقط
+
+---
+
+## في مكان آخر
+
+- [SQLi.md](SQLi.md) — اللوجن يتكلم مع DB خطأ
+- [JWT.md](JWT.md) — هوية في token موقّع والتحقق فاشل
+- [IDOR.md](IDOR.md) — auth OK لكن حدود الكائنات لا
 
